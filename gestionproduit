@@ -1,0 +1,33 @@
+package com.mycompany.projetgl.metier;
+
+
+import com.mycompany.projetgl.ProduitDAO;
+import com.mycompany.projetgl.Produit;
+import java.time.LocalDate;
+import java.util.List;
+
+public class GestionProduit {
+    private ProduitDAO dao;
+
+    public GestionProduit(ProduitDAO dao) {
+        this.dao = dao;
+    }
+
+    // Ajout simplifié : categorie est un String
+    public void ajouterProduit(String nom, double prix, String code, int stock, int seuil, String categorie) {
+        Produit p = new Produit(nom, prix, code, stock, seuil, categorie);
+        dao.ajouterProduit(p);
+    }
+
+    public List<Produit> listerProduits() { return dao.getProduits(); }
+
+    public void mettreAJourProduit(Produit p) {
+        dao.mettreAJourProduit(p);
+    }
+
+    public void supprimerProduit(int id) { dao.supprimerProduit(id); }
+    
+    public Produit getProduitById(int id) { return dao.getProduitById(id); }
+    
+    public List<Produit> rechercherParNom(String nom) { return dao.getProduitsByNom(nom); }
+}
