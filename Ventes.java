@@ -1,9 +1,9 @@
 package com.mycompany.projetgl.presentation;
 import com.mycompany.projetgl.DAO.DBConnection;
-import com.mycompany.projetgl.ProduitDAO;
 import com.mycompany.projetgl.metier.GestionVentes;
 import com.mycompany.projetgl.LigneVente;
 import com.mycompany.projetgl.Produit;
+import com.mycompany.projetgl.metier.GestionProduit;
 
 import java.awt.Color;
 import java.awt.Cursor;
@@ -29,8 +29,9 @@ import javax.swing.table.JTableHeader;
  * @author InfoPro
  */
 public class Ventes extends javax.swing.JFrame {
-private ProduitDAO produitDAO;
-    private GestionVentes gestionVentes;
+private GestionProduit serviceProduit; // Pour lire le stock
+    private GestionVentes serviceVente;    // Pour enregistrer la vente
+    
     private List<Produit> listeProduitsStock; 
     private List<LigneVente> panier = new ArrayList<>(); 
     private double totalVente = 0.0;
@@ -53,46 +54,37 @@ private ProduitDAO produitDAO;
         this.getContentPane().setBackground(MAIN_BG_COLOR);
         this.setLocationRelativeTo(null);
         
-        // Connexion BDD
         Connection conn = DBConnection.getConnection();
         if (conn != null) {
-            produitDAO = new ProduitDAO(conn);
-            gestionVentes = new GestionVentes(conn);
+            // INITIALISATION DES SERVICES MÉTIER
+            serviceProduit = new GestionProduit(conn); // Remplace le DAO direct
+            serviceVente = new GestionVentes(conn);
         } else {
             JOptionPane.showMessageDialog(this, "Erreur Connexion BDD !", "Erreur", JOptionPane.ERROR_MESSAGE);
         }
         
-        // --- CORRECTION ICI : ON REND LES TABLEAUX NON ÉDITABLES ---
-        
-        // 1. Tableau Stock (Gauche)
+        // Configuration des Tableaux (Non éditables)
         jTable1.setModel(new DefaultTableModel(
             new Object[][]{}, 
             new String[]{"ID", "Nom", "Prix", "Stock"}
         ) {
-            // Cette méthode empêche l'édition des cellules
             @Override
-            public boolean isCellEditable(int row, int column) {
-                return false; 
-            }
+            public boolean isCellEditable(int row, int column) { return false; }
         });
 
-        // 2. Tableau Panier (Droite)
         jTable2.setModel(new DefaultTableModel(
             new Object[][]{}, 
             new String[]{"Produit", "Prix U.", "Qté", "Total"}
         ) {
-            // Idem pour le panier
             @Override
-            public boolean isCellEditable(int row, int column) {
-                return false; 
-            }
+            public boolean isCellEditable(int row, int column) { return false; }
         });
         
-        // Suite de l'initialisation...
         initStyles();
         initEventsComplementaires();
         chargerStock();
     }
+  
 
     // --- STYLE ---
     private void initStyles() {
@@ -125,12 +117,17 @@ private ProduitDAO produitDAO;
     // LOGIQUE MÉTIER
     // =========================================================================
 
-    private void chargerStock() {
+   private void chargerStock() {
         DefaultTableModel model = (DefaultTableModel) jTable1.getModel();
         model.setRowCount(0);
-        if (produitDAO != null) {
-            listeProduitsStock = produitDAO.getProduits(); 
+
+        if (serviceProduit != null) {
+            // CORRECTION : On appelle le Service Métier, pas le DAO
+            // Assurez-vous que GestionProduit a une méthode "listerTousLesProduits" ou similaire
+            listeProduitsStock = serviceProduit.listerTousLesProduits(); 
+            
             for (Produit p : listeProduitsStock) {
+                // Petite logique d'affichage autorisée dans la vue (ne rien afficher si stock 0)
                 if (p.getQteStock() > 0) {
                     model.addRow(new Object[]{ p.getId(), p.getNom(), p.getPrix() + " €", p.getQteStock() });
                 }
@@ -142,49 +139,52 @@ private ProduitDAO produitDAO;
         String query = jTextField1.getText().toLowerCase();
         DefaultTableModel model = (DefaultTableModel) jTable1.getModel();
         model.setRowCount(0);
+        
+        // Le filtrage visuel peut rester ici (c'est de l'affichage)
+        // Mais idéalement, on pourrait demander au métier : serviceProduit.rechercher(query);
         if (listeProduitsStock != null) {
             for (Produit p : listeProduitsStock) {
-                if ((p.getNom().toLowerCase().contains(query) || p.getCodeBarre().contains(query)) && p.getQteStock() > 0) {
+                boolean match = p.getNom().toLowerCase().contains(query) || p.getCodeBarre().contains(query);
+                if (match && p.getQteStock() > 0) {
                     model.addRow(new Object[]{ p.getId(), p.getNom(), p.getPrix() + " €", p.getQteStock() });
                 }
             }
         }
     }
 
-  private void ajouterAuPanier() {
-        int row = jTable1.getSelectedRow();
-        if (row == -1) return;
+    // ... [La méthode ajouterAuPanier reste identique] ...
+    private void ajouterAuPanier() {
+       int row = jTable1.getSelectedRow();
+       if (row == -1) return;
+       try {
+           int idProd = Integer.parseInt(jTable1.getValueAt(row, 0).toString());
+           String nomProd = jTable1.getValueAt(row, 1).toString();
+           double prixProd = Double.parseDouble(jTable1.getValueAt(row, 2).toString().replace(" €", "").replace(",", "."));
+           int stockMax = Integer.parseInt(jTable1.getValueAt(row, 3).toString());
 
-        try {
-            int idProd = Integer.parseInt(jTable1.getValueAt(row, 0).toString());
-            String nomProd = jTable1.getValueAt(row, 1).toString();
-            double prixProd = Double.parseDouble(jTable1.getValueAt(row, 2).toString().replace(" €", "").replace(",", "."));
-            int stockMax = Integer.parseInt(jTable1.getValueAt(row, 3).toString());
+           String qteStr = JOptionPane.showInputDialog(this, "Quantité pour " + nomProd + " ?", "1");
+           if (qteStr == null) return;
 
-            String qteStr = JOptionPane.showInputDialog(this, "Quantité pour " + nomProd + " ?", "1");
-            if (qteStr == null) return;
+           int qte = Integer.parseInt(qteStr);
+           if (qte <= 0 || qte > stockMax) {
+               JOptionPane.showMessageDialog(this, "Quantité invalide ou stock insuffisant !");
+               return;
+           }
 
-            int qte = Integer.parseInt(qteStr);
-            if (qte <= 0 || qte > stockMax) {
-                JOptionPane.showMessageDialog(this, "Quantité invalide ou stock insuffisant !");
-                return;
-            }
+           LigneVente ligne = new LigneVente(idProd, nomProd, qte, prixProd);
+           panier.add(ligne);
+           
+           DefaultTableModel model = (DefaultTableModel) jTable2.getModel();
+           model.addRow(new Object[]{ nomProd, String.format("%.2f €", prixProd), qte, String.format("%.2f €", (qte * prixProd)) });
 
-            LigneVente ligne = new LigneVente(idProd, nomProd, qte, prixProd);
-            panier.add(ligne);
-            
-            DefaultTableModel model = (DefaultTableModel) jTable2.getModel();
-            model.addRow(new Object[]{ nomProd, String.format("%.2f €", prixProd), qte, String.format("%.2f €", (qte * prixProd)) });
+           totalVente += (qte * prixProd);
+           jLabel1.setText(String.format("%.2f €", totalVente));
 
-            totalVente += (qte * prixProd);
-            jLabel1.setText(String.format("%.2f €", totalVente));
+       } catch (Exception e) {
+           JOptionPane.showMessageDialog(this, "Erreur : " + e.getMessage());
+       }
+   }
 
-        } catch (Exception e) {
-            JOptionPane.showMessageDialog(this, "Erreur : " + e.getMessage());
-        }
-    }
-    
-    // Méthode utilitaire pour nettoyer (appelée par les deux boutons)
     private void resetInterface() {
         panier.clear();
         ((DefaultTableModel) jTable2.getModel()).setRowCount(0);
@@ -245,6 +245,7 @@ private ProduitDAO produitDAO;
         jButton5 = new javax.swing.JButton();
 
         setDefaultCloseOperation(javax.swing.WindowConstants.EXIT_ON_CLOSE);
+        setBackground(new java.awt.Color(255, 255, 255));
 
         jTextField1.addActionListener(new java.awt.event.ActionListener() {
             public void actionPerformed(java.awt.event.ActionEvent evt) {
@@ -275,7 +276,7 @@ private ProduitDAO produitDAO;
         jLabel1.setFont(new java.awt.Font("Segoe UI", 1, 24)); // NOI18N
         jLabel1.setText("0.00€");
 
-        jButton1.setText("Valider vente");
+        jButton1.setText("Valider");
         jButton1.addActionListener(new java.awt.event.ActionListener() {
             public void actionPerformed(java.awt.event.ActionEvent evt) {
                 jButton1ActionPerformed(evt);
@@ -341,7 +342,7 @@ private ProduitDAO produitDAO;
                 .addContainerGap()
                 .addGroup(jPanel1Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
                     .addComponent(jButton3, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
-                    .addComponent(jButton4, javax.swing.GroupLayout.DEFAULT_SIZE, 168, Short.MAX_VALUE)
+                    .addComponent(jButton4, javax.swing.GroupLayout.DEFAULT_SIZE, 174, Short.MAX_VALUE)
                     .addComponent(jButton5, javax.swing.GroupLayout.Alignment.TRAILING, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
                 .addContainerGap())
         );
@@ -350,11 +351,11 @@ private ProduitDAO produitDAO;
             .addGroup(jPanel1Layout.createSequentialGroup()
                 .addGap(132, 132, 132)
                 .addComponent(jButton4)
-                .addGap(107, 107, 107)
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                 .addComponent(jButton3)
-                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, 137, Short.MAX_VALUE)
+                .addGap(127, 127, 127)
                 .addComponent(jButton5)
-                .addGap(136, 136, 136))
+                .addGap(137, 137, 137))
         );
 
         javax.swing.GroupLayout layout = new javax.swing.GroupLayout(getContentPane());
@@ -362,22 +363,20 @@ private ProduitDAO produitDAO;
         layout.setHorizontalGroup(
             layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
             .addGroup(layout.createSequentialGroup()
-                .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                 .addComponent(jPanel1, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
                 .addGap(18, 18, 18)
                 .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
                     .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, layout.createSequentialGroup()
                         .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.TRAILING)
-                            .addGroup(layout.createSequentialGroup()
-                                .addComponent(jLabel2, javax.swing.GroupLayout.PREFERRED_SIZE, 144, javax.swing.GroupLayout.PREFERRED_SIZE)
-                                .addGap(18, 18, 18))
-                            .addGroup(layout.createSequentialGroup()
-                                .addComponent(jButton2, javax.swing.GroupLayout.PREFERRED_SIZE, 101, javax.swing.GroupLayout.PREFERRED_SIZE)
-                                .addGap(38, 38, 38)))
+                            .addComponent(jLabel2, javax.swing.GroupLayout.PREFERRED_SIZE, 144, javax.swing.GroupLayout.PREFERRED_SIZE)
+                            .addComponent(jButton2, javax.swing.GroupLayout.PREFERRED_SIZE, 126, javax.swing.GroupLayout.PREFERRED_SIZE))
+                        .addGap(18, 18, 18)
                         .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                            .addComponent(jButton1)
-                            .addComponent(jTextField2, javax.swing.GroupLayout.PREFERRED_SIZE, 120, javax.swing.GroupLayout.PREFERRED_SIZE))
-                        .addGap(52, 52, 52))
+                            .addComponent(jTextField2, javax.swing.GroupLayout.PREFERRED_SIZE, 120, javax.swing.GroupLayout.PREFERRED_SIZE)
+                            .addGroup(layout.createSequentialGroup()
+                                .addGap(6, 6, 6)
+                                .addComponent(jButton1, javax.swing.GroupLayout.PREFERRED_SIZE, 126, javax.swing.GroupLayout.PREFERRED_SIZE)))
+                        .addGap(40, 40, 40))
                     .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, layout.createSequentialGroup()
                         .addComponent(jLabel1)
                         .addGap(162, 162, 162))
@@ -406,17 +405,20 @@ private ProduitDAO produitDAO;
                             .addComponent(jTextField1))
                         .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                         .addComponent(jScrollPane1, javax.swing.GroupLayout.PREFERRED_SIZE, 395, javax.swing.GroupLayout.PREFERRED_SIZE))
-                    .addComponent(jScrollPane2, javax.swing.GroupLayout.DEFAULT_SIZE, 426, Short.MAX_VALUE))
+                    .addComponent(jScrollPane2))
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
                 .addComponent(jLabel1)
-                .addGap(7, 7, 7)
-                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
-                    .addComponent(jLabel2, javax.swing.GroupLayout.PREFERRED_SIZE, 16, javax.swing.GroupLayout.PREFERRED_SIZE)
-                    .addComponent(jTextField2, javax.swing.GroupLayout.PREFERRED_SIZE, 25, javax.swing.GroupLayout.PREFERRED_SIZE))
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
-                    .addComponent(jButton1, javax.swing.GroupLayout.PREFERRED_SIZE, 46, javax.swing.GroupLayout.PREFERRED_SIZE)
-                    .addComponent(jButton2, javax.swing.GroupLayout.PREFERRED_SIZE, 46, javax.swing.GroupLayout.PREFERRED_SIZE)))
+                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.TRAILING)
+                    .addComponent(jTextField2, javax.swing.GroupLayout.PREFERRED_SIZE, 25, javax.swing.GroupLayout.PREFERRED_SIZE)
+                    .addGroup(layout.createSequentialGroup()
+                        .addComponent(jLabel2, javax.swing.GroupLayout.PREFERRED_SIZE, 18, javax.swing.GroupLayout.PREFERRED_SIZE)
+                        .addGap(8, 8, 8)))
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING, false)
+                    .addComponent(jButton2, javax.swing.GroupLayout.DEFAULT_SIZE, 32, Short.MAX_VALUE)
+                    .addComponent(jButton1, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+                .addGap(26, 26, 26))
             .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, layout.createSequentialGroup()
                 .addContainerGap()
                 .addComponent(jPanel1, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
@@ -431,32 +433,29 @@ private ProduitDAO produitDAO;
 
     private void jButton1ActionPerformed(java.awt.event.ActionEvent evt) {                                         
        if (panier.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "Impossible : Le panier est vide !");
-            return;
-        }
-        try {
-            // Vérification du montant reçu (Si rempli)
-            if (!jTextField2.getText().isEmpty()) {
-                double recu = Double.parseDouble(jTextField2.getText().replace(",", "."));
-                if (recu < totalVente) {
-                    JOptionPane.showMessageDialog(this, "Erreur : Montant reçu insuffisant !");
-                    return;
-                }
-                JOptionPane.showMessageDialog(this, "Monnaie à rendre : " + String.format("%.2f €", (recu - totalVente)));
-            }
+           JOptionPane.showMessageDialog(this, "Impossible : Le panier est vide !");
+           return;
+       }
+       try {
+           if (!jTextField2.getText().isEmpty()) {
+               double recu = Double.parseDouble(jTextField2.getText().replace(",", "."));
+               if (recu < totalVente) {
+                   JOptionPane.showMessageDialog(this, "Erreur : Montant reçu insuffisant !");
+                   return;
+               }
+               JOptionPane.showMessageDialog(this, "Monnaie à rendre : " + String.format("%.2f €", (recu - totalVente)));
+           }
 
-            // Enregistrement en base de données
-            gestionVentes.enregistrerVente(panier, totalVente, 1);
-            
-            JOptionPane.showMessageDialog(this, "Vente validée avec succès !");
-            
-            // Nettoyage après succès
-            resetInterface();
+           // ICI C'EST PARFAIT : On utilise déjà le service Vente
+           serviceVente.enregistrerVente(panier, totalVente, 1);
+           
+           JOptionPane.showMessageDialog(this, "Vente validée avec succès !");
+           resetInterface();
 
-        } catch (Exception e) {
-            JOptionPane.showMessageDialog(this, "Erreur critique : " + e.getMessage());
-            e.printStackTrace();
-        }
+       } catch (Exception e) {
+           JOptionPane.showMessageDialog(this, "Erreur critique : " + e.getMessage());
+           e.printStackTrace();
+       }
     }                                        
 
     private void jButton2ActionPerformed(java.awt.event.ActionEvent evt) {                                         
@@ -526,8 +525,8 @@ private ProduitDAO produitDAO;
     private javax.swing.JButton jButton1;
     private javax.swing.JButton jButton2;
     private javax.swing.JButton jButton3;
-    private javax.swing.JButton jButton4;
-    private javax.swing.JButton jButton5;
+    public javax.swing.JButton jButton4;
+    public javax.swing.JButton jButton5;
     private javax.swing.JLabel jLabel1;
     private javax.swing.JLabel jLabel2;
     private javax.swing.JLabel jLabel3;
